@@ -279,6 +279,12 @@
 
 			});
 
+			cnv.keyPressed(() => {
+				userStartAudio(); // access Mic
+				Main.toggleRecordingIdx();
+			})
+
+
 		}
 
 		function draw() {
