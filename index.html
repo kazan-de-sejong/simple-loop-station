@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>🎙</title>
+	<script type="text/javascript" src="./vendor/p5/p5.js"></script>
+	<script type="text/javascript" src="./vendor/p5/addons/p5.sound.js"></script>
+	<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/lodash@4.17.15/lodash.min.js"></script>
+	<script type="text/javascript">
+		// navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+		// .then(res => console.log(res)).catch(err => console.log(err))
+	</script>
+	<style type="text/css">
+		body {
+			margin: 0;
+			padding: 0;
+			background-color: #E5E5E5;
+			overflow: hidden;
+		}
+	</style>
+</head>
+<body>
+	<div>
+	</div>
+	<script type="text/javascript">
+		let mic, cnv, Main;
+
+		const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+		function setup() {
+
+			class Session {
+
+				constructor(mic) {
+
+					this.isDone = false;
+
+					// Create SoundFile
+					this.sound = new p5.SoundFile();
+
+					// Create Reorder
+					this.rec = new p5.SoundRecorder();
+					this.rec.setInput(mic);
+
+				}
+
+				startRecording = function () {
+
+					// 재녹음 방지
+					if (this.isDone) return;
+
+					// Start Recording
+					this.rec.record(this.sound);
+
+				};
+
+				endRecording = function (thisMain) {
+
+					// End Recording
+					this.isDone = true;
+					this.rec.stop();
+
+					setTimeout(() => {
+
+						// 메인 설정
+						if (thisMain) {
+							this.sound.play();
+							this.isMain = true;
+							Main.isPlaying = true;
+						}
+
+					}, 0);
+
+				};
+
+				getPlayInfo = () => ({
+					totalTime:   parseInt(this.sound.duration() * 1000),
+					currentTime: parseInt(this.sound.currentTime() * 1000),
+					remainTime : parseInt(this.sound.duration() * 1000) - parseInt(this.sound.currentTime() * 1000),
+					currentPercent: parseInt(
+						parseInt(this.sound.currentTime() * 1000) / parseInt(this.sound.duration() * 1000) * 100
+					)
+				});
+
+			};
+
+			class Conductor {
+
+				constructor(mic) {
+
+					this.recordingIdx;
+					this.mic          = mic;
+					this.sessions     = [];
+					this.hasScheduled = false;
+					this.isPlaying    = false;
+					this.isRecording  = false;
+
+					this.mic.start();
+
+				}
+
+				createSession = () => {
+
+					// 녹음중에 새로운 세션 생성 불가능
+					if (this.isRecording) return;
+
+					this.recordingIdx = this.sessions.length;
+					this.sessions.push(new Session(this.mic, this.maxTime));
+
+					if (this.recordingIdx === 0) {
+						this.setMain(this.sessions[this.recordingIdx]);
+					}
+
+				};
+
+				startRecordingIdx = () => {
+
+					this.isRecording = true;
+					const ingSession = this.sessions[this.recordingIdx];
+
+					ingSession.startRecording();
+
+				};
+
+				endRecordingIdx = () => {
+
+					this.isRecording = false;
+					const ingSession = this.sessions[this.recordingIdx];
+
+					ingSession.endRecording(this.recordingIdx === 0 ? ingSession : null);
+					this.createSession(); // 미리 다음 세션 생성
+
+				};
+
+				toggleRecordingIdx = () => {
+
+					const ingSession = this.sessions[this.recordingIdx];
+
+					// 메인이 없을 때 (첫 녹음일 때)
+					if (!this.main.isDone) {
+
+						if (!this.isRecording) {
+							this.startRecordingIdx();
+						} else {
+							this.endRecordingIdx();
+						}
+
+					// 메인이 있을 때.
+					} else {
+
+						if (!this.isRecording) {
+							this.hasScheduled = true;
+						}
+
+					}
+
+				};
+
+				setMain = session => {
+
+					// 메인 셋팅
+					this.main = session;
+
+					// 종료시 이벤트
+					session.sound.onended(async () => {
+
+						// 예약된 녹음 끝
+						if (Main.hasScheduled && Main.isRecording) {
+							Main.endRecordingIdx();
+							Main.hasScheduled = false;
+						}
+
+						// 레코딩 중인 세션 제외
+						const availableSessions = Main.sessions.filter((v, i) => i !== Main.recordingIdx);
+
+						await delay(0);
+
+						// 병렬로 play 실행
+						return await Promise.all(
+							availableSessions.map(s => new Promise(resolve => {
+								s.sound.play();
+								return resolve(true);
+
+							}))
+						).then(res => {
+
+							// 예약된 녹음 시작
+							if (Main.hasScheduled && !Main.isRecording) {
+								Main.startRecordingIdx();
+							}
+
+						}).catch(err => console.log('error!', err));
+
+					});
+
+				};
+
+				display = () => {
+
+					if (!this.isPlaying) {
+
+						// Ready Screen
+						if (!this.isRecording) {
+							background(255);
+							textSize(24);
+							textAlign(CENTER, CENTER);
+							text('Tap to record!', width / 2, height / 2);
+						}
+
+					// Playing Screen
+					} else {
+
+						background(255);
+						noStroke();
+						fill(100, 200, 250);
+						rect(
+							0, 0, map(
+								this.main.getPlayInfo().currentTime,
+								0, this.main.getPlayInfo().totalTime,
+								0, width
+							), height
+						);
+
+						// 레코딩이 에약되어 있다면
+						if (this.hasScheduled & !this.isRecording) {
+							textSize(18);
+							fill(250, 50, 50);
+							text('Recording has booked !', width/2, 80);
+
+							if (this.main.getPlayInfo().remainTime < 4000) {
+								fill(250, 50, 50, map(
+									this.main.getPlayInfo().currentTime,
+									0, this.main.getPlayInfo().totalTime,
+									30, 180
+								));
+								rect(0, 0, width, height)
+							}
+						}
+
+						fill(80, 80, 80);
+						textSize(24);
+						text(`${this.main.getPlayInfo().currentTime} ms / ${this.main.getPlayInfo().totalTime} ms`, width/2, height/2);
+						textSize(16);
+						text('1000 ms = 1 sec', width/2, height/2 + 60);
+					}
+
+					// Recording Screen
+					if (this.isRecording) {
+						if (!this.isPlaying) background(255);
+						ellipseMode(CENTER);
+
+						noFill();
+						strokeWeight(4);
+						stroke(250, 50, 50);
+						ellipse(width/2, height/2, 80, 80);
+
+						noStroke();
+						angleMode(DEGREES);
+						fill(250, 50, 50, abs(150 * sin(frameCount * 2.5)) + 55);
+						ellipse(width/2, height/2, 60, 60);
+
+						text('🎙 Recording ...', width/2, height/2 + 80)
+					}
+
+				};
+
+			};
+
+			frameRate(100); // 1frame = 10ms
+			cnv = createCanvas(windowWidth, windowHeight);
+
+			// Create Conductor
+			Main = new Conductor(new p5.AudioIn());
+			Main.createSession();
+
+			cnv.mousePressed(() => {
+
+				userStartAudio(); // access Mic
+				Main.toggleRecordingIdx();
+
+			});
+
+		}
+
+		function draw() {
+			Main.display();
+		}
+
+
+	</script>
+</body>
+</html>
